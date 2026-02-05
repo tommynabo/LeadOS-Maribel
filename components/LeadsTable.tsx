@@ -8,11 +8,11 @@ interface LeadsTableProps {
 }
 
 const exportToCSV = (leads: Lead[]) => {
-  const headers = ['Empresa', 'Email', 'Teléfono', 'Web', 'Decisor', 'Cargo', 'LinkedIn', 'Ubicación', 'Estado', 'Resumen', 'ANÁLISIS'];
+  const headers = ['Empresa', 'Email', 'Teléfono', 'Web', 'Decisor', 'Cargo', 'LinkedIn', 'Ubicación', 'CUELLO DE BOTELLA', 'ANÁLISIS COMPLETO', 'MENSAJE PERSONALIZADO'];
   const escapeCSV = (value: string | undefined) => {
     if (!value) return '';
-    const escaped = value.replace(/"/g, '""').replace(/\n/g, ' ');
-    return escaped.includes(',') || escaped.includes('"') || escaped.includes('\n')
+    const escaped = value.replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, '');
+    return escaped.includes(',') || escaped.includes('"')
       ? `"${escaped}"`
       : escaped;
   };
@@ -26,9 +26,9 @@ const exportToCSV = (leads: Lead[]) => {
     escapeCSV(l.decisionMaker?.role),
     escapeCSV(l.decisionMaker?.linkedin),
     escapeCSV(l.location),
-    escapeCSV(l.status),
-    escapeCSV(l.aiAnalysis?.summary),
-    escapeCSV(l.aiAnalysis?.fullAnalysis || l.aiAnalysis?.summary)
+    escapeCSV(l.aiAnalysis?.generatedIcebreaker), // Bottleneck
+    escapeCSV(l.aiAnalysis?.fullAnalysis || l.aiAnalysis?.summary),
+    escapeCSV(l.aiAnalysis?.fullMessage) // Personalized message
   ].join(','));
 
   const csvContent = [headers.join(','), ...rows].join('\n');
@@ -36,7 +36,7 @@ const exportToCSV = (leads: Lead[]) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `leads_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.download = `leads_ultra_${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
