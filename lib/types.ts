@@ -9,7 +9,7 @@ export interface ProjectConfig {
   targets: {
     icp: string; // Ideal Customer Profile description
     locations: string[];
-  }; 
+  };
   enabledPlatforms: PlatformSource[];
   searchSettings: {
     defaultDepth: number;
@@ -30,6 +30,8 @@ export interface Lead {
     email: string;
     phone?: string;
     linkedin?: string;
+    facebook?: string;
+    instagram?: string;
   };
   aiAnalysis: {
     summary: string; // "Venden suplementos veganos..."

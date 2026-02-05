@@ -1,18 +1,67 @@
 // import { ApifyClient } from 'apify-client'; // Removed strictly Node.js dependency
 import { Lead, SearchConfigState } from '../../lib/types';
-import { enrichLeadWithEmail } from '../../lib/emailScraper';
 
 export type LogCallback = (message: string) => void;
 export type ResultCallback = (leads: Lead[]) => void;
 
-// Aaron's Niche Filters
-const TARGET_KEYWORDS = ['reformas', 'obras', 'instalad', 'construcc', 'rehabilitacion'];
+// Apify Actor IDs
+const GOOGLE_MAPS_SCRAPER = 'nwua9Gu5YrADL7ZDj'; // Google Maps Scraper with Emails
+const CONTACT_SCRAPER = 'vdrmO1lXCkhbPjE9j'; // Contact Info Scraper
+const DECISION_MAKER_FINDER = 'curious_coder/decision-maker-email-extractor';
 
 export class SearchService {
     private isRunning = false;
+    private apiKey: string = '';
 
     public stop() {
         this.isRunning = false;
+    }
+
+    private async callApifyActor(actorId: string, input: any, onLog: LogCallback): Promise<any[]> {
+        const startUrl = `https://api.apify.com/v2/acts/${actorId}/runs?token=${this.apiKey}`;
+
+        const startResponse = await fetch(startUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input)
+        });
+
+        if (!startResponse.ok) {
+            const err = await startResponse.text();
+            throw new Error(`Error iniciando actor ${actorId}: ${err}`);
+        }
+
+        const startData = await startResponse.json();
+        const runId = startData.data.id;
+        const defaultDatasetId = startData.data.defaultDatasetId;
+
+        onLog(`[APIFY] Actor ${actorId} iniciado (Run: ${runId})`);
+
+        // Poll for completion
+        let isFinished = false;
+        while (!isFinished && this.isRunning) {
+            await new Promise(r => setTimeout(r, 5000));
+
+            const statusUrl = `https://api.apify.com/v2/acts/${actorId}/runs/${runId}?token=${this.apiKey}`;
+            const statusRes = await fetch(statusUrl);
+            const statusData = await statusRes.json();
+            const status = statusData.data.status;
+
+            onLog(`[APIFY] Estado: ${status}`);
+
+            if (status === 'SUCCEEDED') {
+                isFinished = true;
+            } else if (status === 'FAILED' || status === 'ABORTED') {
+                throw new Error(`Actor ${actorId} falló: ${status}`);
+            }
+        }
+
+        if (!this.isRunning) return [];
+
+        // Fetch results
+        const itemsUrl = `https://api.apify.com/v2/datasets/${defaultDatasetId}/items?token=${this.apiKey}`;
+        const itemsRes = await fetch(itemsUrl);
+        return await itemsRes.json();
     }
 
     public async startSearch(
@@ -24,165 +73,167 @@ export class SearchService {
         const leads: Lead[] = [];
 
         try {
-            onLog(`[INIT] Configurando cliente Apify(Browser Mode)...`);
+            this.apiKey = import.meta.env.VITE_APIFY_API_TOKEN || import.meta.env.VITE_APIFY_API_KEY || '';
 
-            const apiKey = import.meta.env.VITE_APIFY_API_KEY || import.meta.env.APIFY_API_KEY;
-
-            if (!apiKey) {
-                throw new Error("Falta la API Key de Apify. Asegúrate de tener VITE_APIFY_API_KEY en tu .env");
+            if (!this.apiKey) {
+                throw new Error("Falta la API Key de Apify. Configura VITE_APIFY_API_TOKEN en tu .env");
             }
 
-            // 1. Input Parsing & Validation
-            const query = `${config.query} en España`; // Force Spain as per Aaron's rules
-            onLog(`[BUSQUEDA] Iniciando scraping para: "${query}"(Max: ${config.maxResults})`);
+            // ═══════════════════════════════════════════════════════════════════
+            // STAGE 1: Google Maps Scraper with Emails
+            // ═══════════════════════════════════════════════════════════════════
+            const query = `${config.query} en España`;
+            onLog(`[STAGE 1] 🗺️ Iniciando Google Maps Scraper para: "${query}"`);
 
-            // 2. Call Google Maps Scraper Actor via REST API (Fetch)
-            // We use fetch because apify-client is for Node.js
-            const input = {
+            const mapsInput = {
                 searchStringsArray: [query],
-                locationQuery: '',
-                maxCrawlerConcurrency: 2,
-                maxReviews: 0,
+                maxCrawledPlacesPerSearch: config.maxResults || 20,
+                language: 'es',
+                includeWebsiteEmail: true,
+                scrapeContacts: true,
                 maxImages: 0,
-                scrapeReviewerName: false,
-                scrapeReviewerId: false,
-                scrapeReviewerUrl: false,
-                scrapeReviewText: false,
-                lang: 'es',
-                maxWebPages: 1,
-                maxScrolls: 10,
-                zoom: 12,
-                limit: config.maxResults || 20,
+                maxReviews: 0,
             };
 
-            onLog(`[APIFY] Enviando petición HTTP al actor google - maps - scraper...`);
-
-            // Start the actor
-            const startUrl = `https://api.apify.com/v2/acts/compass~crawler-google-places/runs?token=${apiKey}`;
-            const startResponse = await fetch(startUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(input)
-            });
-
-            if (!startResponse.ok) {
-                const err = await startResponse.text();
-                throw new Error(`Error iniciando Apify: ${err}`);
-            }
-
-            const startData = await startResponse.json();
-            const runId = startData.data.id;
-            const defaultDatasetId = startData.data.defaultDatasetId;
-
-            onLog(`[APIFY] Tarea iniciada (ID: ${runId}). Esperando resultados...`);
-
-            // Poll for completion
-            let isFinished = false;
-            while (!isFinished && this.isRunning) {
-                await new Promise(r => setTimeout(r, 5000)); // Wait 5s
-
-                const statusUrl = `https://api.apify.com/v2/acts/compass~crawler-google-places/runs/${runId}?token=${apiKey}`;
-                const statusRes = await fetch(statusUrl);
-                const statusData = await statusRes.json();
-                const status = statusData.data.status;
-
-                onLog(`[APIFY] Estado: ${status}`);
-
-                if (status === 'SUCCEEDED') {
-                    isFinished = true;
-                } else if (status === 'FAILED' || status === 'ABORTED') {
-                    throw new Error(`El actor de Apify falló con estado: ${status}`);
-                }
-            }
+            const mapsResults = await this.callApifyActor(GOOGLE_MAPS_SCRAPER, mapsInput, onLog);
+            onLog(`[STAGE 1] ✅ Obtenidos ${mapsResults.length} resultados de Google Maps`);
 
             if (!this.isRunning) return;
 
-            onLog(`[APIFY] Descargando resultados del Dataset: ${defaultDatasetId}...`);
-            const itemsUrl = `https://api.apify.com/v2/datasets/${defaultDatasetId}/items?token=${apiKey}`;
-            const itemsRes = await fetch(itemsUrl);
-            const items = await itemsRes.json();
+            // Process Google Maps results into basic leads
+            const basicLeads: Lead[] = mapsResults.map((item: any, index: number) => ({
+                id: String(item.placeId || `lead-${Date.now()}-${index}`),
+                source: 'gmaps' as const,
+                companyName: item.title || item.name || 'Sin Nombre',
+                website: item.website?.replace(/^https?:\/\//, '').replace(/\/$/, ''),
+                location: item.address || item.fullAddress,
+                decisionMaker: {
+                    name: '',
+                    role: '',
+                    email: item.email || (item.emails?.[0]) || '',
+                    phone: item.phone || (item.phones?.[0]) || '',
+                    linkedin: '',
+                    facebook: item.facebook || '',
+                    instagram: item.instagram || '',
+                },
+                aiAnalysis: {
+                    summary: `${item.categoryName || 'Empresa'} con ${item.reviewsCount || 0} reseñas (${item.totalScore || 'N/A'}⭐)`,
+                    painPoints: [],
+                    generatedIcebreaker: '',
+                    fullMessage: ''
+                },
+                status: item.email ? 'enriched' : 'scraped'
+            }));
 
-            onLog(`[PROCESAMIENTO] Obtenidos ${items.length} resultados crudos. Filtrando...`);
+            onLog(`[STAGE 1] 📊 ${basicLeads.filter(l => l.decisionMaker?.email).length}/${basicLeads.length} con email`);
 
-            let processedCount = 0;
+            // ═══════════════════════════════════════════════════════════════════
+            // STAGE 2: Contact Info Scraper (for leads without email)
+            // ═══════════════════════════════════════════════════════════════════
+            const leadsWithoutEmail = basicLeads.filter(l => !l.decisionMaker?.email && l.website);
 
-            for (const item of items) {
-                if (!this.isRunning) break;
+            if (leadsWithoutEmail.length > 0 && this.isRunning) {
+                onLog(`[STAGE 2] 🔍 Enriqueciendo ${leadsWithoutEmail.length} leads sin email...`);
 
-                // --- AARON'S FILTERING RULES ---
-                const rawTitle = (item.title as string || '').toLowerCase();
-                const reviewsCount = item.reviewsCount || 0;
+                const websiteUrls = leadsWithoutEmail.map(l => `https://${l.website}`).slice(0, 10); // Limit batch
 
-                // Rule: Discard 0 reviews
-                if (reviewsCount === 0) {
-                    continue; // Skip "Ghost companies"
-                }
-
-                // Rule: Focus on "Instaladores", "Reformas", "Obras"
-                const titleMatches = TARGET_KEYWORDS.some(k => rawTitle.includes(k));
-                const categoryMatches = (item.categoryName as string || '').toLowerCase();
-                const isTarget = titleMatches || TARGET_KEYWORDS.some(k => categoryMatches.includes(k));
-
-                if (!isTarget) {
-                    // Filter or Keep? Implementation choice. keeping for now as Maps search is usually relevant.
-                }
-
-                // --- MAPPING ---
-                const website = item.website as string;
-                let decisionMaker = { name: '', role: '', email: '' };
-
-                // --- ENRICHMENT (The "Email Hunter") ---
-                if (website) {
-                    onLog(`[EMAIL_HUNTER] Analizando ${website} para ${item.title}...`);
-                    try {
-                        const foundEmail = await enrichLeadWithEmail(website);
-                        if (foundEmail) {
-                            decisionMaker.email = foundEmail;
-                            onLog(`[EMAIL_HUNTER] ¡Email encontrado! ${foundEmail}`);
-                        } else if (item.email) {
-                            decisionMaker.email = item.email as string;
-                        }
-                    } catch (e) {
-                        console.error("Enrichment error", e);
-                    }
-                }
-
-                if (!decisionMaker.email) {
-                    // Check if Apify found it
-                    const emails = item.emails as string[];
-                    if (emails && emails.length > 0) decisionMaker.email = emails[0];
-                }
-
-                // Determine Status
-                const status = decisionMaker.email ? 'enriched' : 'scraped';
-
-                const lead: Lead = {
-                    id: String(item.placeId || `lead-${Date.now()}-${processedCount}`),
-                    source: 'gmaps',
-                    companyName: item.title as string || 'Sin Nombre',
-                    website: website,
-                    socialUrl: undefined,
-                    location: item.address as string,
-                    decisionMaker: decisionMaker,
-                    aiAnalysis: {
-                        summary: `Empresa de ${item.categoryName || 'Reformas'} con ${reviewsCount} reseñas.`,
-                        painPoints: [],
-                        generatedIcebreaker: "",
-                        fullMessage: ""
-                    },
-                    status: status as any
+                const contactInput = {
+                    startUrls: websiteUrls.map(url => ({ url })),
+                    maxRequestsPerWebsite: 3,
+                    sameDomainOnly: true,
                 };
 
-                leads.push(lead);
-                processedCount++;
+                try {
+                    const contactResults = await this.callApifyActor(CONTACT_SCRAPER, contactInput, onLog);
+
+                    // Merge contact results back into leads
+                    for (const contact of contactResults) {
+                        const domain = contact.domain || '';
+                        const matchingLead = basicLeads.find(l =>
+                            l.website && domain.includes(l.website.replace('www.', ''))
+                        );
+
+                        if (matchingLead && matchingLead.decisionMaker) {
+                            if (contact.emails?.length > 0) {
+                                matchingLead.decisionMaker.email = contact.emails[0];
+                                matchingLead.status = 'enriched';
+                            }
+                            if (contact.phones?.length > 0 && !matchingLead.decisionMaker.phone) {
+                                matchingLead.decisionMaker.phone = contact.phones[0];
+                            }
+                            if (contact.linkedIn) {
+                                matchingLead.decisionMaker.linkedin = contact.linkedIn;
+                            }
+                            if (contact.facebook) {
+                                matchingLead.decisionMaker.facebook = contact.facebook;
+                            }
+                            if (contact.instagram) {
+                                matchingLead.decisionMaker.instagram = contact.instagram;
+                            }
+                        }
+                    }
+
+                    onLog(`[STAGE 2] ✅ Enriquecimiento completado`);
+                } catch (e: any) {
+                    onLog(`[STAGE 2] ⚠️ Error en enriquecimiento: ${e.message}`);
+                }
             }
 
-            onLog(`[FINALIZADO] Procesamiento completo. ${leads.length} leads cualificados encontrados.`);
-            onComplete(leads);
+            // ═══════════════════════════════════════════════════════════════════
+            // STAGE 3: Decision Maker Finder (optional - for top prospects)
+            // ═══════════════════════════════════════════════════════════════════
+            const topLeadsForDM = basicLeads
+                .filter(l => l.decisionMaker?.email && l.website)
+                .slice(0, 5); // Limit to top 5 to save credits
+
+            if (topLeadsForDM.length > 0 && this.isRunning) {
+                onLog(`[STAGE 3] 👤 Buscando decisores para ${topLeadsForDM.length} empresas top...`);
+
+                const dmInput = {
+                    urls: topLeadsForDM.map(l => `https://${l.website}`),
+                    maxPagesPerDomain: 5,
+                };
+
+                try {
+                    const dmResults = await this.callApifyActor(DECISION_MAKER_FINDER, dmInput, onLog);
+
+                    for (const dm of dmResults) {
+                        const domain = dm.domain || dm.url || '';
+                        const matchingLead = basicLeads.find(l =>
+                            l.website && domain.includes(l.website.replace('www.', ''))
+                        );
+
+                        if (matchingLead && matchingLead.decisionMaker && dm.decisionMakers?.length > 0) {
+                            const topDM = dm.decisionMakers[0];
+                            matchingLead.decisionMaker.name = topDM.name || '';
+                            matchingLead.decisionMaker.role = topDM.title || topDM.position || 'Propietario';
+                            if (topDM.email) matchingLead.decisionMaker.email = topDM.email;
+                            if (topDM.linkedin) matchingLead.decisionMaker.linkedin = topDM.linkedin;
+                            matchingLead.status = 'ready';
+                        }
+                    }
+
+                    onLog(`[STAGE 3] ✅ Decisores identificados`);
+                } catch (e: any) {
+                    onLog(`[STAGE 3] ⚠️ Error buscando decisores: ${e.message}`);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // FINAL: Return all leads
+            // ═══════════════════════════════════════════════════════════════════
+            const enrichedCount = basicLeads.filter(l => l.decisionMaker?.email).length;
+            const readyCount = basicLeads.filter(l => l.status === 'ready').length;
+
+            onLog(`[FINALIZADO] 🎯 ${basicLeads.length} leads totales:`);
+            onLog(`   • ${enrichedCount} con email`);
+            onLog(`   • ${readyCount} con decisor identificado`);
+
+            onComplete(basicLeads);
 
         } catch (error: any) {
             console.error(error);
-            onLog(`[ERROR] Fallo crítico: ${error.message}`);
+            onLog(`[ERROR] ❌ Fallo crítico: ${error.message}`);
             onComplete([]);
         } finally {
             this.isRunning = false;
@@ -191,4 +242,3 @@ export class SearchService {
 }
 
 export const searchService = new SearchService();
-
