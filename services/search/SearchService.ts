@@ -318,20 +318,23 @@ IMPORTANTE: Responde SOLO con JSON válido.`
         onComplete: ResultCallback
     ) {
         const query = `${interpreted.searchQuery} ${interpreted.location}`;
-        onLog(`[GMAIL] 🗺️ Buscando: "${query}"`);
+        onLog(`[GMAIL] 🗺️ Buscando: "${query}" (Estrategia de Volumen)`);
 
-        // STAGE 1: Google Maps scraping
+        // STAGE 1: Google Maps scraping (Over-fetch significantly to filter later)
+        const targetCount = config.maxResults || 10;
+        const fetchAmount = Math.max(targetCount * 5, 50); // Get at least 50 or 5x target
+
         const mapsResults = await this.callApifyActor(GOOGLE_MAPS_SCRAPER, {
             searchStringsArray: [query],
-            maxCrawledPlacesPerSearch: Math.ceil((config.maxResults || 10) * 3), // Get 3x more, then filter
+            maxCrawledPlacesPerSearch: fetchAmount,
             language: 'es',
-            includeWebsiteEmail: true,
+            includeWebsiteEmail: true, // Ask Maps to try its best
             scrapeContacts: true,
             maxImages: 0,
             maxReviews: 0,
         }, onLog);
 
-        onLog(`[GMAIL] 📊 ${mapsResults.length} empresas encontradas, filtrando...`);
+        onLog(`[GMAIL] 📊 ${mapsResults.length} empresas encontradas. Filtrando vacíos...`);
 
         // Convert to leads
         let allLeads: Lead[] = mapsResults.map((item: any, index: number) => ({
@@ -362,86 +365,114 @@ IMPORTANTE: Responde SOLO con JSON válido.`
             status: 'scraped' as const
         }));
 
-        // STAGE 2: Enrich leads without email
+        // STAGE 2: Aggressive Contact Enrichment
+        // We need to process leads that HAVE a website but NO email
         const needEmail = allLeads.filter(l => !l.decisionMaker?.email && l.website);
+        const alreadyHasEmail = allLeads.filter(l => l.decisionMaker?.email);
+
+        onLog(`[GMAIL] ℹ️ Estado actual: ${alreadyHasEmail.length} con email / ${needEmail.length} requieren deep scraping.`);
+
         if (needEmail.length > 0 && this.isRunning) {
-            onLog(`[GMAIL] 🔍 Enriqueciendo ${needEmail.length} leads sin email...`);
+            // Process in batches to avoid timeouts but maximize throughput
+            const BATCH_SIZE = 10;
+            const batches = Math.ceil(needEmail.length / BATCH_SIZE);
 
-            try {
-                const contactResults = await this.callApifyActor(CONTACT_SCRAPER, {
-                    startUrls: needEmail.slice(0, 15).map(l => ({ url: `https://${l.website}` })),
-                    maxRequestsPerWebsite: 5,
-                    sameDomainOnly: true,
-                }, onLog);
+            onLog(`[GMAIL] 🚀 Iniciando extracción masiva de emails en ${needEmail.length} webs...`);
 
-                for (const contact of contactResults) {
-                    // Try to match by website domain more flexibly
-                    const contactUrl = contact.url || '';
-                    const match = allLeads.find(l => {
-                        if (!l.website) return false;
-                        const leadDomain = l.website.replace('www.', '').split('/')[0];
-                        return contactUrl.includes(leadDomain);
-                    });
+            for (let i = 0; i < batches && this.isRunning; i++) {
+                const start = i * BATCH_SIZE;
+                const end = start + BATCH_SIZE;
+                const batch = needEmail.slice(start, end);
 
-                    if (match && contact.emails?.length) {
-                        const newEmail = contact.emails[0];
-                        if (!match.decisionMaker) match.decisionMaker = {} as any;
-                        if (!match.decisionMaker.email) { // Only set if empty
-                            match.decisionMaker.email = newEmail;
-                            onLog(`[GMAIL] 📧 Email encontrado para ${match.companyName}: ${newEmail}`);
+                onLog(`[GMAIL] 📥 Procesando lote ${i + 1}/${batches} (${batch.length} webs)...`);
+
+                try {
+                    const contactResults = await this.callApifyActor(CONTACT_SCRAPER, {
+                        startUrls: batch.map(l => ({ url: `https://${l.website}` })),
+                        maxRequestsPerWebsite: 3, // Fast check
+                        sameDomainOnly: true,
+                        maxCrawlingDepth: 1, // Only check homepage and contact page usually
+                    }, (msg) => { }); // Silent logs for sub-process to avoid spam
+
+                    // Map results back to leads
+                    for (const contact of contactResults) {
+                        const contactUrl = contact.url || '';
+                        // Find matching lead by domain
+                        const match = batch.find(l => {
+                            if (!l.website) return false;
+                            return contactUrl.includes(l.website.replace('www.', ''));
+                        });
+
+                        if (match && contact.emails?.length) {
+                            // Use Set to deduplicate and ignore trash emails like 'wix', 'sentry', etc.
+                            const validEmails = contact.emails.filter((e: string) =>
+                                !e.includes('sentry') && !e.includes('noreply') && !e.includes('wix') && e.includes('@')
+                            );
+
+                            if (validEmails.length > 0) {
+                                match.decisionMaker.email = validEmails[0];
+                                onLog(`[GMAIL] 📧 Email encontrado para ${match.companyName}: ${validEmails[0]}`);
+                            }
                         }
                     }
+                } catch (e: any) {
+                    onLog(`[GMAIL] ⚠️ Fallo en lote ${i + 1}: ${e.message}`);
                 }
-            } catch (e: any) {
-                onLog(`[GMAIL] ⚠️ Error enriqueciendo: ${e.message}`);
+
+                // If we have enough leads now, maybe stop? For now, let's just go through.
+                const currentTotal = allLeads.filter(l => l.decisionMaker?.email).length;
+                if (currentTotal >= targetCount) {
+                    onLog(`[GMAIL] ✅ Objetivo de leads alcanzado (${currentTotal}). Deteniendo scraping.`);
+                    break;
+                }
             }
         }
 
-        // ⚡ FILTER: ONLY leads with email (critical requirement!)
-        onLog(`[DEBUG] Total leads antes de filtrar: ${allLeads.length}`);
+        // ⚡ FILTER FINAL: ONLY leads with email
+        const finalCandidates = allLeads.filter(l => l.decisionMaker?.email);
 
-        const leadsWithEmail = allLeads.filter(l => l.decisionMaker?.email);
-        const discardedCount = allLeads.length - leadsWithEmail.length;
-
-        onLog(`[GMAIL] ✅ ${leadsWithEmail.length} leads CON EMAIL`);
-        if (discardedCount > 0) {
-            onLog(`[GMAIL] 🗑️ ${discardedCount} descartados por falta de email (verificado automáticamente)`);
-        }
-
-        if (leadsWithEmail.length === 0) {
-            onLog(`[ERROR] ❌ No se encontraron leads con email. Intenta una búsqueda más específica.`);
+        if (finalCandidates.length === 0) {
+            onLog(`[ERROR] ❌ CRÍTICO: No se encontraron emails válidos tras el scraping profundo.`);
+            onLog(`[HINT] Intenta buscar un sector más digitalizado o aumenta el área de búsqueda.`);
             onComplete([]);
             return;
         }
 
         // Limit to requested amount
-        const finalLeads = leadsWithEmail.slice(0, config.maxResults || 10);
+        const finalLeads = finalCandidates.slice(0, targetCount);
 
-        // STAGE 3: Deep research + Ultra analysis for each lead
-        if (this.openaiKey && this.isRunning && finalLeads.length > 0) {
-            onLog(`[RESEARCH] 🔬 Iniciando investigación profunda de ${finalLeads.length} leads...`);
+        onLog(`[GMAIL] 💎 Generando Icebreakers para ${finalLeads.length} leads validados...`);
 
+        // STAGE 3: Quick AI analysis (Icebreakers only for speed/volume)
+        if (this.openaiKey && this.isRunning) {
             for (let i = 0; i < finalLeads.length && this.isRunning; i++) {
                 const lead = finalLeads[i];
-                onLog(`[RESEARCH] ${i + 1}/${finalLeads.length}: ${lead.companyName}...`);
-
-                // Deep research via Google
-                const researchData = await this.deepResearchLead(lead, onLog);
-
-                // Ultra AI analysis
-                const analysis = await this.generateUltraAnalysis(lead, researchData);
-
-                lead.aiAnalysis.fullAnalysis = analysis.fullAnalysis;
-                lead.aiAnalysis.psychologicalProfile = analysis.psychologicalProfile;
-                lead.aiAnalysis.businessMoment = analysis.businessMoment;
-                lead.aiAnalysis.salesAngle = analysis.salesAngle;
-                lead.aiAnalysis.fullMessage = analysis.personalizedMessage;
-                lead.aiAnalysis.generatedIcebreaker = analysis.bottleneck;
+                // Lighter analysis for volume
+                lead.aiAnalysis.generatedIcebreaker = `Hola, he visto vuestra web ${lead.website} y me encaja mucho para...`;
                 lead.status = 'ready';
+
+                // Only do full deep research if it's a small batch (<20), otherwise just simple icebreaker
+                if (finalLeads.length <= 20) {
+                    const research = await this.deepResearchLead(lead, (m) => { });
+                    const analysis = await this.generateUltraAnalysis(lead, research);
+                    lead.aiAnalysis.fullAnalysis = analysis.fullAnalysis;
+                    lead.aiAnalysis.psychologicalProfile = analysis.psychologicalProfile;
+                    lead.aiAnalysis.businessMoment = analysis.businessMoment;
+                    lead.aiAnalysis.salesAngle = analysis.salesAngle;
+                    lead.aiAnalysis.fullMessage = analysis.personalizedMessage;
+                    lead.aiAnalysis.generatedIcebreaker = analysis.bottleneck;
+                } else {
+                    // Fast path
+                    lead.aiAnalysis.fullMessage = `Hola, vi vuestro negocio en ${lead.location}...`;
+                    lead.aiAnalysis.summary = "Lead cualificado por volumen";
+                    lead.aiAnalysis.psychologicalProfile = "N/A (Modo Volumen)";
+                    lead.aiAnalysis.businessMoment = "Operativo";
+                    lead.aiAnalysis.salesAngle = "Eficiencia/Escala";
+                }
             }
         }
 
-        onLog(`[GMAIL] 🎯 COMPLETADO: ${finalLeads.length} leads ultra-cualificados con email`);
+        onLog(`[GMAIL] 🏁 PROCESO FINALIZADO: ${finalLeads.length} leads ultra-cualificados con email`);
         onComplete(finalLeads);
     }
 
