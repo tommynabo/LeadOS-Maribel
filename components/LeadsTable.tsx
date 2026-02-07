@@ -26,9 +26,9 @@ const exportToCSV = (leads: Lead[]) => {
     escapeCSV(l.decisionMaker?.role),
     escapeCSV(l.decisionMaker?.linkedin),
     escapeCSV(l.location),
-    escapeCSV(l.aiAnalysis?.generatedIcebreaker), // Bottleneck
-    escapeCSV(l.aiAnalysis?.fullAnalysis || l.aiAnalysis?.summary),
-    escapeCSV(l.aiAnalysis?.fullMessage) // Personalized message
+    escapeCSV(l.aiAnalysis?.generatedIcebreaker || 'Pendiente de detección'), // Bottleneck
+    escapeCSV(l.aiAnalysis?.fullAnalysis || l.aiAnalysis?.summary || 'Pendiente de análisis'),
+    escapeCSV(l.aiAnalysis?.fullMessage || 'Pendiente de generación') // Personalized message
   ].join(','));
 
   const csvContent = [headers.join(','), ...rows].join('\n');

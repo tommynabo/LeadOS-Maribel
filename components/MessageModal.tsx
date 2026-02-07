@@ -167,7 +167,7 @@ export function MessageModal({ lead, onClose, onApprove }: MessageModalProps) {
                      </div>
                   ) : (
                      <textarea
-                        className="w-full h-64 bg-secondary/30 border border-input rounded-lg p-5 font-sans text-sm leading-relaxed text-foreground focus:ring-1 focus:ring-primary focus:border-primary outline-none resize-none"
+                        className="w-full h-64 bg-zinc-900 border border-zinc-700 rounded-lg p-5 font-sans text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:ring-1 focus:ring-primary focus:border-primary outline-none resize-none"
                         value={message}
                         onChange={(e) => setMessage(e.target.value)}
                         placeholder="El mensaje se generará automáticamente..."
@@ -188,8 +188,8 @@ export function MessageModal({ lead, onClose, onApprove }: MessageModalProps) {
                   onClick={handleApprove}
                   disabled={isGenerating || approved}
                   className={`px-4 py-2 text-sm font-medium rounded-lg transition-all shadow-lg ${approved
-                        ? 'bg-green-500 text-white'
-                        : 'bg-primary text-primary-foreground hover:brightness-110 shadow-primary/20'
+                     ? 'bg-green-500 text-white'
+                     : 'bg-primary text-primary-foreground hover:brightness-110 shadow-primary/20'
                      } disabled:opacity-50`}
                >
                   {approved ? (
