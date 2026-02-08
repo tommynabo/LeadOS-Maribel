@@ -215,6 +215,15 @@ function App() {
     );
   };
 
+  const handleStop = () => {
+    if (isSearching) {
+      searchService.stop();
+      setIsSearching(false);
+      setTerminalExpanded(false);
+      addLog('[USUARIO] 🛑 Generación detenida manualmente.');
+    }
+  };
+
   const handleConfigChange = (updates: Partial<SearchConfigState>) => {
     setConfig(prev => ({ ...prev, ...updates }));
   };
@@ -255,6 +264,7 @@ function App() {
               config={config}
               onChange={handleConfigChange}
               onSearch={handleSearch}
+              onStop={handleStop}
               isSearching={isSearching}
             />
 
