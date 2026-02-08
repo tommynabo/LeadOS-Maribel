@@ -21,8 +21,8 @@ function App() {
 
   // Search State
   const [config, setConfig] = useState<SearchConfigState>({
-    query: '',
-    source: PROJECT_CONFIG.enabledPlatforms[0] || 'instagram',
+    query: PROJECT_CONFIG.targets.icp,
+    source: 'linkedin',
     mode: 'fast',
     maxResults: 10
   });
@@ -104,7 +104,7 @@ function App() {
   const loadHistory = async (uid: string) => {
     try {
       const { data, error } = await supabase
-        .from('search_results')
+        .from('search_results_diego')
         .select('*')
         .eq('user_id', uid)
         .order('created_at', { ascending: false });
@@ -194,7 +194,7 @@ function App() {
         // Save to Supabase (Cloud)
         if (userId) {
           try {
-            const { error } = await supabase.from('search_results').insert({
+            const { error } = await supabase.from('search_results_diego').insert({
               user_id: userId,
               session_id: newSession.id,
               platform: config.source,

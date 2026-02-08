@@ -5,10 +5,10 @@ export const PROJECT_CONFIG: ProjectConfig = {
     clientName: 'REGIST',
     primaryColor: 'hsl(142, 76%, 36%)',
     targets: {
-        icp: 'Gimnasios, Centros de Crossfit y Estudios de Yoga que necesitan más clientes',
+        icp: 'CEOs, Founders, CTOs, Directivos, Tomadores de decisiones',
         locations: ['Madrid', 'Barcelona', 'Valencia'],
     },
-    enabledPlatforms: ['gmail', 'linkedin'],
+    enabledPlatforms: ['linkedin'],
     searchSettings: {
         defaultDepth: 10,
         defaultMode: 'fast'
