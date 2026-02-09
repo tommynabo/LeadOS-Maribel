@@ -5,7 +5,7 @@ export const PROJECT_CONFIG: ProjectConfig = {
     clientName: 'REGIST',
     primaryColor: 'hsl(142, 76%, 36%)',
     targets: {
-        icp: 'CEOs, Founders, CTOs, Directivos, Tomadores de decisiones',
+        icp: 'Mujeres directivas/gerentes, +40 años, buscando reinvención, marca personal, autoras/speakers',
         locations: ['Madrid', 'Barcelona', 'Valencia'],
     },
     enabledPlatforms: ['linkedin'],

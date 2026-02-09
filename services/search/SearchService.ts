@@ -48,12 +48,13 @@ export class SearchService {
                     messages: [
                         {
                             role: 'system',
-                            content: `Eres un experto en prospección B2B. Interpreta la búsqueda para encontrar DUEÑOS y DECISORES.
+                            content: `Eres un experto en prospección B2B y Marca Personal. Interpreta la búsqueda para encontrar MUJERES DIRECTIVAS (+40 años) interesadas en REINVENCIÓN PROFESIONAL, MARCA PERSONAL o ser AUTORAS/SPEAKERS.
+
 Responde SOLO con JSON:
 {
-  "searchQuery": "término optimizado",
+  "searchQuery": "término optimizado para encontrar este perfil",
   "industry": "sector detectado",
-  "targetRoles": ["CEO", "Fundador", etc],
+  "targetRoles": ["CEO", "Fundadora", "Directora", "Autora", "Speaker"],
   "location": "ubicación o España"
 }`
                         },
@@ -68,7 +69,7 @@ Responde SOLO con JSON:
             if (match) return JSON.parse(match[0]);
         } catch (e) { console.error(e); }
 
-        return { searchQuery: userQuery, industry: userQuery, targetRoles: ['CEO', 'Fundador', 'Propietario'], location: 'España' };
+        return { searchQuery: userQuery, industry: userQuery, targetRoles: ['CEO', 'Fundadora', 'Directora', 'Autora', 'Speaker'], location: 'España' };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -174,20 +175,19 @@ ${researchData || 'Sin datos adicionales'}
                         messages: [
                             {
                                 role: 'system',
-                                content: `Eres un GENIO del análisis de negocios y psicología empresarial. Tu trabajo es hacer el análisis MÁS COMPLETO posible de cada lead para ventas B2B.
+                                content: `Eres un GENIO del análisis de marca personal y psicología femenina directiva. Tu trabajo es analizar si este lead (MUJER DIRECTIVA/GERENTE) está en un momento de búsqueda de REINVENCIÓN, PROPÓSITO o POTENCIAR SU MARCA PERSONAL.
 
 SI HAY DATOS DE "ACTIVIDAD RECIENTE (Posts)":
-- Analiza su estilo de escritura (Directo, Reflexivo, Técnico, Vendedor).
-- Deduce sus valores y qué temas le obsesionan ahora mismo.
-- Úsalo para personalizar el mensaje al máximo.
+- Busca señales de: "Nuevo rumbo", "Reflexión personal", "Conferencias", "Libros", "Mentoring", "Cansancio corporativo".
+- Analiza su tono: ¿Es inspiradora? ¿Vulnerable? ¿Autoritaria?
 
 DEBES generar exactamente este JSON (sin markdown, solo JSON puro):
 {
-  "psychologicalProfile": "Describe su perfil en 2 frases (Ej: 'Visionario y directo. Valora la innovación...')",
-  "businessMoment": "Deduce en qué fase está la empresa (Ej: 'Expansión agresiva', 'Consolidación', 'Buscando eficiencia')",
-  "salesAngle": "El argumento ÚNICO para venderle a ESTA persona hoy.",
-  "bottleneck": "Una frase BRUTAL y específica sobre su mayor freno o cuello de botella detectado.",
-  "personalizedMessage": "Mensaje de 100 palabras. Tono 'Coffee Chat' profesional. MENCIONA SU ÚLTIMO POST O ACTIVIDAD si existe."
+  "psychologicalProfile": "Describe su perfil y momento vital (Ej: 'Directiva consolidada buscando legado...' o 'En transición hacia speaker...')",
+  "businessMoment": "Estado de su marca personal (Ej: 'Invisible', 'Emergente', 'Autoridad establecida')",
+  "salesAngle": "El argumento EMOCIONAL para ofrecerle acompañamiento en su marca personal.",
+  "bottleneck": "Su mayor bloqueo visible (Ej: 'Tiene historia pero no la cuenta', 'Inconsistencia', 'Marca anticuada').",
+  "personalizedMessage": "Mensaje de 100 palabras. Tono CERCANO, EMPÁTICO y PROFESIONAL. Menciona su trayectoria o posts recientes."
 }
 
 IMPORTANTE: Responde SOLO con JSON válido.`
@@ -485,9 +485,13 @@ IMPORTANTE: Responde SOLO con JSON válido.`
         onLog: LogCallback,
         onComplete: ResultCallback
     ) {
-        // 1. ACTIVE SEARCH (Búsqueda Activa)
-        const roleTerms = interpreted.targetRoles.slice(0, 2).join(' OR ');
-        const activeQuery = `site:linkedin.com/in ${roleTerms} "${interpreted.industry}" "${interpreted.location}"`;
+        // 1. ACTIVE SEARCH (Búsqueda Activa - Women Leadership & Reinvention Focus)
+        // Ensure we prioritize female terms if possible, though LinkedIn roles are often neutral or mixed.
+        // We add keywords for the specific "Reinvention/Author/Speaker" angle.
+        const roleTerms = interpreted.targetRoles.slice(0, 3).join(' OR ');
+        const intentKeywords = '"marca personal" OR "reinvención" OR "conferenciante" OR "speaker" OR "autora" OR "mentora" OR "liderazgo femenino"';
+
+        const activeQuery = `site:linkedin.com/in (${roleTerms}) (${intentKeywords}) "${interpreted.location}"`;
 
         onLog(`[LINKEDIN] 🕵️‍♂️ Iniciando BÚSQUEDA ACTIVA`);
         onLog(`[LINKEDIN] 🎯 Query: ${activeQuery}`);
