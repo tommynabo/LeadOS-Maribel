@@ -162,7 +162,7 @@ function App() {
   };
 
   // Search Logic
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!config.query) return;
 
     setIsSearching(true);
