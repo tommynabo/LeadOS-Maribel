@@ -281,7 +281,7 @@ IMPORTANTE: Responde SOLO con JSON válido.`
         return await itemsRes.json();
     }
 
-    public async startSearch(config: SearchConfigState, onLog: LogCallback, onComplete: ResultCallback) {
+    public async startSearch(config: SearchConfigState, exclusionSet: Set<string>, onLog: LogCallback, onComplete: ResultCallback) {
         this.isRunning = true;
 
         try {
@@ -295,9 +295,9 @@ IMPORTANTE: Responde SOLO con JSON válido.`
             onLog(`[IA] ✅ Industria: ${interpreted.industry}`);
 
             if (config.source === 'linkedin') {
-                await this.searchLinkedIn(config, interpreted, onLog, onComplete);
+                await this.searchLinkedIn(config, interpreted, exclusionSet, onLog, onComplete);
             } else {
-                await this.searchGmail(config, interpreted, onLog, onComplete);
+                await this.searchGmail(config, interpreted, exclusionSet, onLog, onComplete);
             }
 
         } catch (error: any) {
@@ -314,6 +314,7 @@ IMPORTANTE: Responde SOLO con JSON válido.`
     private async searchGmail(
         config: SearchConfigState,
         interpreted: { searchQuery: string; industry: string; targetRoles: string[]; location: string },
+        exclusionSet: Set<string>,
         onLog: LogCallback,
         onComplete: ResultCallback
     ) {
@@ -337,229 +338,260 @@ IMPORTANTE: Responde SOLO con JSON válido.`
         onLog(`[GMAIL] 📊 ${mapsResults.length} empresas encontradas. Filtrando vacíos...`);
 
         // Convert to leads
-        let allLeads: Lead[] = mapsResults.map((item: any, index: number) => ({
-            id: String(item.placeId || `lead-${Date.now()}-${index}`),
-            source: 'gmail' as const,
-            companyName: item.title || item.name || 'Sin Nombre',
-            website: item.website?.replace(/^https?:\/\//, '').replace(/\/$/, '') || '',
-            location: item.address || item.fullAddress || '',
-            decisionMaker: {
-                name: '',
-                role: 'Propietario',
-                email: item.email || (item.emails?.[0]) || '',
-                phone: item.phone || (item.phones?.[0]) || '',
-                linkedin: '',
-                facebook: item.facebook || '',
-                instagram: item.instagram || '',
-            },
-            aiAnalysis: {
-                summary: `${item.categoryName || interpreted.industry} - ${item.reviewsCount || 0} reseñas (${item.totalScore || 'N/A'}⭐)`,
-                painPoints: [],
-                generatedIcebreaker: '',
-                fullMessage: '',
-                fullAnalysis: '',
-                psychologicalProfile: '',
-                businessMoment: '',
-                salesAngle: ''
-            },
-            status: 'scraped' as const
-        }));
+        let allLeads: Lead[] = [];
+        let duplicatesCount = 0;
 
-        // STAGE 2: Aggressive Contact Enrichment
-        // We need to process leads that HAVE a website but NO email
-        const needEmail = allLeads.filter(l => !l.decisionMaker?.email && l.website);
-        const alreadyHasEmail = allLeads.filter(l => l.decisionMaker?.email);
+        for (const item of mapsResults) {
+            const tempLead = {
+                companyName: item.title || item.name || 'Sin Nombre',
+                website: item.website?.replace(/^https?:\/\//, '').replace(/\/$/, '') || ''
+            };
 
-        onLog(`[GMAIL] ℹ️ Estado actual: ${alreadyHasEmail.length} con email / ${needEmail.length} requieren deep scraping.`);
+            // 🛑 ANTI-DUPLICATE CHECK
+            if (this.isDuplicate(tempLead.companyName, tempLead.website || '', exclusionSet)) {
+                duplicatesCount++;
+                continue; // Skip this one
+            }
 
-        if (needEmail.length > 0 && this.isRunning) {
-            // Process in batches to avoid timeouts but maximize throughput
-            const BATCH_SIZE = 10;
-            const batches = Math.ceil(needEmail.length / BATCH_SIZE);
+            allLeads.push({
+                id: String(item.placeId || `lead-${Date.now()}-${allLeads.length}`),
+                source: 'gmail' as const,
+                companyName: tempLead.companyName,
+                website: tempLead.website,
+                location: item.address || item.fullAddress || '',
+                decisionMaker: {
+                    name: '',
+                    role: 'Propietario',
+                    email: item.email || (item.emails?.[0]) || '',
+                    phone: item.phone || (item.phones?.[0]) || '',
+                    linkedin: '',
+                    facebook: item.facebook || '',
+                    instagram: item.instagram || '',
+                },
+                aiAnalysis: {
+                    summary: `${item.categoryName || interpreted.industry} - ${item.reviewsCount || 0} reseñas (${item.totalScore || 'N/A'}⭐)`,
+                    painPoints: [],
+                    generatedIcebreaker: '',
+                    fullMessage: '',
+                    fullAnalysis: '',
+                    psychologicalProfile: '',
+                    businessMoment: '',
+                    salesAngle: ''
+                },
+                status: 'scraped' as const
+            });
+    }
 
-            onLog(`[GMAIL] 🚀 Iniciando extracción masiva de emails en ${needEmail.length} webs...`);
+    if(duplicatesCount > 0) {
+    onLog(`[ANTI-DUPLICADOS] 🛡️ Se han descartado ${duplicatesCount} leads que ya existían en tu base de datos.`);
+}
 
-            for (let i = 0; i < batches && this.isRunning; i++) {
-                const start = i * BATCH_SIZE;
-                const end = start + BATCH_SIZE;
-                const batch = needEmail.slice(start, end);
+// STAGE 2: Aggressive Contact Enrichment
+// We need to process leads that HAVE a website but NO email
+const needEmail = allLeads.filter(l => !l.decisionMaker?.email && l.website);
+const alreadyHasEmail = allLeads.filter(l => l.decisionMaker?.email);
 
-                onLog(`[GMAIL] 📥 Procesando lote ${i + 1}/${batches} (${batch.length} webs)...`);
+onLog(`[GMAIL] ℹ️ Estado actual: ${alreadyHasEmail.length} con email / ${needEmail.length} requieren deep scraping.`);
 
-                try {
-                    const contactResults = await this.callApifyActor(CONTACT_SCRAPER, {
-                        startUrls: batch.map(l => ({ url: `https://${l.website}` })),
-                        maxRequestsPerWebsite: 3, // Fast check
-                        sameDomainOnly: true,
-                        maxCrawlingDepth: 1, // Only check homepage and contact page usually
-                    }, (msg) => { }); // Silent logs for sub-process to avoid spam
+if (needEmail.length > 0 && this.isRunning) {
+    // Process in batches to avoid timeouts but maximize throughput
+    const BATCH_SIZE = 10;
+    const batches = Math.ceil(needEmail.length / BATCH_SIZE);
 
-                    // Map results back to leads
-                    for (const contact of contactResults) {
-                        const contactUrl = contact.url || '';
-                        // Find matching lead by domain
-                        const match = batch.find(l => {
-                            if (!l.website) return false;
-                            return contactUrl.includes(l.website.replace('www.', ''));
-                        });
+    onLog(`[GMAIL] 🚀 Iniciando extracción masiva de emails en ${needEmail.length} webs...`);
 
-                        if (match && contact.emails?.length) {
-                            // Use Set to deduplicate and ignore trash emails like 'wix', 'sentry', etc.
-                            const validEmails = contact.emails.filter((e: string) =>
-                                !e.includes('sentry') && !e.includes('noreply') && !e.includes('wix') && e.includes('@')
-                            );
+    for (let i = 0; i < batches && this.isRunning; i++) {
+        const start = i * BATCH_SIZE;
+        const end = start + BATCH_SIZE;
+        const batch = needEmail.slice(start, end);
 
-                            if (validEmails.length > 0) {
-                                match.decisionMaker.email = validEmails[0];
-                                onLog(`[GMAIL] 📧 Email encontrado para ${match.companyName}: ${validEmails[0]}`);
-                            }
-                        }
+        onLog(`[GMAIL] 📥 Procesando lote ${i + 1}/${batches} (${batch.length} webs)...`);
+
+        try {
+            const contactResults = await this.callApifyActor(CONTACT_SCRAPER, {
+                startUrls: batch.map(l => ({ url: `https://${l.website}` })),
+                maxRequestsPerWebsite: 3, // Fast check
+                sameDomainOnly: true,
+                maxCrawlingDepth: 1, // Only check homepage and contact page usually
+            }, (msg) => { }); // Silent logs for sub-process to avoid spam
+
+            // Map results back to leads
+            for (const contact of contactResults) {
+                const contactUrl = contact.url || '';
+                // Find matching lead by domain
+                const match = batch.find(l => {
+                    if (!l.website) return false;
+                    return contactUrl.includes(l.website.replace('www.', ''));
+                });
+
+                if (match && contact.emails?.length) {
+                    // Use Set to deduplicate and ignore trash emails like 'wix', 'sentry', etc.
+                    const validEmails = contact.emails.filter((e: string) =>
+                        !e.includes('sentry') && !e.includes('noreply') && !e.includes('wix') && e.includes('@')
+                    );
+
+                    if (validEmails.length > 0) {
+                        match.decisionMaker.email = validEmails[0];
+                        onLog(`[GMAIL] 📧 Email encontrado para ${match.companyName}: ${validEmails[0]}`);
                     }
-                } catch (e: any) {
-                    onLog(`[GMAIL] ⚠️ Fallo en lote ${i + 1}: ${e.message}`);
-                }
-
-                // If we have enough leads now, maybe stop? For now, let's just go through.
-                const currentTotal = allLeads.filter(l => l.decisionMaker?.email).length;
-                if (currentTotal >= targetCount) {
-                    onLog(`[GMAIL] ✅ Objetivo de leads alcanzado (${currentTotal}). Deteniendo scraping.`);
-                    break;
                 }
             }
+        } catch (e: any) {
+            onLog(`[GMAIL] ⚠️ Fallo en lote ${i + 1}: ${e.message}`);
         }
 
-        // ⚡ FILTER FINAL: ONLY leads with email
-        const finalCandidates = allLeads.filter(l => l.decisionMaker?.email);
-
-        if (finalCandidates.length === 0) {
-            onLog(`[ERROR] ❌ CRÍTICO: No se encontraron emails válidos tras el scraping profundo.`);
-            onLog(`[HINT] Intenta buscar un sector más digitalizado o aumenta el área de búsqueda.`);
-            onComplete([]);
-            return;
+        // If we have enough leads now, maybe stop? For now, let's just go through.
+        const currentTotal = allLeads.filter(l => l.decisionMaker?.email).length;
+        if (currentTotal >= targetCount) {
+            onLog(`[GMAIL] ✅ Objetivo de leads alcanzado (${currentTotal}). Deteniendo scraping.`);
+            break;
         }
+    }
+}
 
-        // Limit to requested amount
-        const finalLeads = finalCandidates.slice(0, targetCount);
+// ⚡ FILTER FINAL: ONLY leads with email
+const finalCandidates = allLeads.filter(l => l.decisionMaker?.email);
 
-        onLog(`[GMAIL] 💎 Generando Icebreakers para ${finalLeads.length} leads validados...`);
+if (finalCandidates.length === 0) {
+    onLog(`[ERROR] ❌ CRÍTICO: No se encontraron emails válidos tras el scraping profundo.`);
+    onLog(`[HINT] Intenta buscar un sector más digitalizado o aumenta el área de búsqueda.`);
+    onComplete([]);
+    return;
+}
 
-        // STAGE 3: Quick AI analysis (Icebreakers only for speed/volume)
-        if (this.openaiKey && this.isRunning) {
-            for (let i = 0; i < finalLeads.length && this.isRunning; i++) {
-                const lead = finalLeads[i];
-                // Lighter analysis for volume
-                lead.aiAnalysis.generatedIcebreaker = `Hola, he visto vuestra web ${lead.website} y me encaja mucho para...`;
-                lead.status = 'ready';
+// Limit to requested amount
+const finalLeads = finalCandidates.slice(0, targetCount);
 
-                // Only do full deep research if it's a small batch (<20), otherwise just simple icebreaker
-                if (finalLeads.length <= 20) {
-                    const research = await this.deepResearchLead(lead, (m) => { });
-                    const analysis = await this.generateUltraAnalysis(lead, research);
-                    lead.aiAnalysis.fullAnalysis = analysis.fullAnalysis;
-                    lead.aiAnalysis.psychologicalProfile = analysis.psychologicalProfile;
-                    lead.aiAnalysis.businessMoment = analysis.businessMoment;
-                    lead.aiAnalysis.salesAngle = analysis.salesAngle;
-                    lead.aiAnalysis.fullMessage = analysis.personalizedMessage;
-                    lead.aiAnalysis.generatedIcebreaker = analysis.bottleneck;
-                } else {
-                    // Fast path
-                    lead.aiAnalysis.fullMessage = `Hola, vi vuestro negocio en ${lead.location}...`;
-                    lead.aiAnalysis.summary = "Lead cualificado por volumen";
-                    lead.aiAnalysis.psychologicalProfile = "N/A (Modo Volumen)";
-                    lead.aiAnalysis.businessMoment = "Operativo";
-                    lead.aiAnalysis.salesAngle = "Eficiencia/Escala";
-                }
-            }
+onLog(`[GMAIL] 💎 Generando Icebreakers para ${finalLeads.length} leads validados...`);
+
+// STAGE 3: Quick AI analysis (Icebreakers only for speed/volume)
+if (this.openaiKey && this.isRunning) {
+    for (let i = 0; i < finalLeads.length && this.isRunning; i++) {
+        const lead = finalLeads[i];
+        // Lighter analysis for volume
+        lead.aiAnalysis.generatedIcebreaker = `Hola, he visto vuestra web ${lead.website} y me encaja mucho para...`;
+        lead.status = 'ready';
+
+        // Only do full deep research if it's a small batch (<20), otherwise just simple icebreaker
+        if (finalLeads.length <= 20) {
+            const research = await this.deepResearchLead(lead, (m) => { });
+            const analysis = await this.generateUltraAnalysis(lead, research);
+            lead.aiAnalysis.fullAnalysis = analysis.fullAnalysis;
+            lead.aiAnalysis.psychologicalProfile = analysis.psychologicalProfile;
+            lead.aiAnalysis.businessMoment = analysis.businessMoment;
+            lead.aiAnalysis.salesAngle = analysis.salesAngle;
+            lead.aiAnalysis.fullMessage = analysis.personalizedMessage;
+            lead.aiAnalysis.generatedIcebreaker = analysis.bottleneck;
+        } else {
+            // Fast path
+            lead.aiAnalysis.fullMessage = `Hola, vi vuestro negocio en ${lead.location}...`;
+            lead.aiAnalysis.summary = "Lead cualificado por volumen";
+            lead.aiAnalysis.psychologicalProfile = "N/A (Modo Volumen)";
+            lead.aiAnalysis.businessMoment = "Operativo";
+            lead.aiAnalysis.salesAngle = "Eficiencia/Escala";
         }
+    }
+}
 
-        onLog(`[GMAIL] 🏁 PROCESO FINALIZADO: ${finalLeads.length} leads ultra-cualificados con email`);
-        onComplete(finalLeads);
+onLog(`[GMAIL] 🏁 PROCESO FINALIZADO: ${finalLeads.length} leads ultra-cualificados con email`);
+onComplete(finalLeads);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // LINKEDIN SEARCH - DEEP RESEARCH + PSYCHOLOGY
     // ═══════════════════════════════════════════════════════════════════════════
     private async searchLinkedIn(
-        config: SearchConfigState,
-        interpreted: { searchQuery: string; industry: string; targetRoles: string[]; location: string },
-        onLog: LogCallback,
-        onComplete: ResultCallback
-    ) {
-        // 1. ACTIVE SEARCH (Búsqueda Activa - Women Leadership & Reinvention Focus)
-        // Ensure we prioritize female terms if possible, though LinkedIn roles are often neutral or mixed.
-        // We add keywords for the specific "Reinvention/Author/Speaker" angle.
-        const roleTerms = interpreted.targetRoles.slice(0, 3).join(' OR ');
-        const intentKeywords = '"marca personal" OR "reinvención" OR "conferenciante" OR "speaker" OR "autora" OR "mentora" OR "liderazgo femenino"';
+    config: SearchConfigState,
+    interpreted: { searchQuery: string; industry: string; targetRoles: string[]; location: string },
+    exclusionSet: Set<string>,
+    onLog: LogCallback,
+    onComplete: ResultCallback
+) {
+    // 1. ACTIVE SEARCH (Búsqueda Activa - Women Leadership & Reinvention Focus)
+    // Ensure we prioritize female terms if possible, though LinkedIn roles are often neutral or mixed.
+    // We add keywords for the specific "Reinvention/Author/Speaker" angle.
+    const roleTerms = interpreted.targetRoles.slice(0, 3).join(' OR ');
+    const intentKeywords = '"marca personal" OR "reinvención" OR "conferenciante" OR "speaker" OR "autora" OR "mentora" OR "liderazgo femenino"';
 
-        const activeQuery = `site:linkedin.com/in (${roleTerms}) (${intentKeywords}) "${interpreted.location}"`;
+    const activeQuery = `site:linkedin.com/in (${roleTerms}) (${intentKeywords}) "${interpreted.location}"`;
 
-        onLog(`[LINKEDIN] 🕵️‍♂️ Iniciando BÚSQUEDA ACTIVA`);
-        onLog(`[LINKEDIN] 🎯 Query: ${activeQuery}`);
+    onLog(`[LINKEDIN] 🕵️‍♂️ Iniciando BÚSQUEDA ACTIVA`);
+    onLog(`[LINKEDIN] 🎯 Query: ${activeQuery}`);
 
-        try {
-            // STEP 1: Discovery via Google
-            const searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
-                queries: activeQuery,
-                maxPagesPerQuery: 2,
-                resultsPerPage: config.maxResults || 15,
-                languageCode: 'es',
-                countryCode: 'es',
-            }, onLog);
+    try {
+        // STEP 1: Discovery via Google
+        const searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
+            queries: activeQuery,
+            maxPagesPerQuery: 2,
+            resultsPerPage: config.maxResults || 15,
+            languageCode: 'es',
+            countryCode: 'es',
+        }, onLog);
 
-            let allResults: any[] = [];
-            for (const result of searchResults) {
-                if (result.organicResults) allResults = allResults.concat(result.organicResults);
+        let allResults: any[] = [];
+        for (const result of searchResults) {
+            if (result.organicResults) allResults = allResults.concat(result.organicResults);
+        }
+
+        const linkedInProfiles = allResults.filter((r: any) => r.url?.includes('linkedin.com/in/'));
+        onLog(`[LINKEDIN] 📋 ${linkedInProfiles.length} perfiles detectados.`);
+
+        if (!this.isRunning || linkedInProfiles.length === 0) {
+            onLog(`[LINKEDIN] ❌ No se encontraron perfiles. Intenta ampliar la zona.`);
+            onComplete([]);
+            return;
+        }
+
+        // STEP 2: Deep Analysis (Posts + Psych Profile)
+        const potentialLeads = linkedInProfiles.slice(0, (config.maxResults || 5)); // Process fewer for deep analysis speed
+        const finalLeads: Lead[] = [];
+
+        // Actor for posts (from the JSON reference)
+        const POSTS_SCRAPER = 'LQQIXN9Othf8f7R5n'; // apimaestro/linkedin-profile-posts
+
+        for (let i = 0; i < potentialLeads.length && this.isRunning; i++) {
+            const profile = potentialLeads[i];
+
+            // 🛑 ANTI-DUPLICATE CHECK (For LinkedIn we use URL/Profile as main key, or Company Name)
+            const tempCompany = this.extractCompany(profile.title) || 'Empresa Desconocida';
+            const tempUrl = profile.url;
+
+            if (this.isDuplicate(tempCompany, tempUrl, exclusionSet)) {
+                onLog(`[ANTI-DUPLICADOS] 🛡️ Saltando ${profile.title.substring(0, 20)}... (Ya existe)`);
+                continue;
             }
 
-            const linkedInProfiles = allResults.filter((r: any) => r.url?.includes('linkedin.com/in/'));
-            onLog(`[LINKEDIN] 📋 ${linkedInProfiles.length} perfiles detectados.`);
+            onLog(`[RESEARCH] 🧠 Analizando candidato ${i + 1}/${potentialLeads.length}: ${profile.title.split(' - ')[0]}...`);
 
-            if (!this.isRunning || linkedInProfiles.length === 0) {
-                onLog(`[LINKEDIN] ❌ No se encontraron perfiles. Intenta ampliar la zona.`);
-                onComplete([]);
-                return;
-            }
+            // Parse Basic Info
+            const titleParts = (profile.title || '').split(' - ');
+            const name = titleParts[0]?.replace(' | LinkedIn', '').trim() || 'Usuario LinkedIn';
+            const role = this.extractRole(profile.title) || 'Decisor';
+            const company = this.extractCompany(profile.title) || 'Empresa Desconocida';
 
-            // STEP 2: Deep Analysis (Posts + Psych Profile)
-            const potentialLeads = linkedInProfiles.slice(0, (config.maxResults || 5)); // Process fewer for deep analysis speed
-            const finalLeads: Lead[] = [];
+            // STEP 3: Scrape Recent Posts (The "Extra Step")
+            let recentPostsText = "";
+            let writingStyle = "Desconocido";
 
-            // Actor for posts (from the JSON reference)
-            const POSTS_SCRAPER = 'LQQIXN9Othf8f7R5n'; // apimaestro/linkedin-profile-posts
+            try {
+                onLog(`[RESEARCH] 📲 Obteniendo actividad reciente (Posts)...`);
+                const postsData = await this.callApifyActor(POSTS_SCRAPER, {
+                    username: profile.url,
+                    limit: 3 // Analyze last 3 posts
+                }, () => { }); // Silent log for sub-task
 
-            for (let i = 0; i < potentialLeads.length && this.isRunning; i++) {
-                const profile = potentialLeads[i];
-                onLog(`[RESEARCH] 🧠 Analizando candidato ${i + 1}/${potentialLeads.length}: ${profile.title.split(' - ')[0]}...`);
-
-                // Parse Basic Info
-                const titleParts = (profile.title || '').split(' - ');
-                const name = titleParts[0]?.replace(' | LinkedIn', '').trim() || 'Usuario LinkedIn';
-                const role = this.extractRole(profile.title) || 'Decisor';
-                const company = this.extractCompany(profile.title) || 'Empresa Desconocida';
-
-                // STEP 3: Scrape Recent Posts (The "Extra Step")
-                let recentPostsText = "";
-                let writingStyle = "Desconocido";
-
-                try {
-                    onLog(`[RESEARCH] 📲 Obteniendo actividad reciente (Posts)...`);
-                    const postsData = await this.callApifyActor(POSTS_SCRAPER, {
-                        username: profile.url,
-                        limit: 3 // Analyze last 3 posts
-                    }, () => { }); // Silent log for sub-task
-
-                    if (postsData && postsData.length > 0) {
-                        recentPostsText = postsData.map((p: any) => `POST (${p.date || 'Reciente'}): ${p.text?.substring(0, 200)}...`).join('\n');
-                        onLog(`[RESEARCH] ✅ ${postsData.length} posts recuperados para análisis.`);
-                    } else {
-                        onLog(`[RESEARCH] ⚠️ Sin actividad reciente accesible.`);
-                    }
-                } catch (e) {
-                    onLog(`[RESEARCH] ⚠️ No se pudieron leer posts (Perfil privado o error).`);
+                if (postsData && postsData.length > 0) {
+                    recentPostsText = postsData.map((p: any) => `POST (${p.date || 'Reciente'}): ${p.text?.substring(0, 200)}...`).join('\n');
+                    onLog(`[RESEARCH] ✅ ${postsData.length} posts recuperados para análisis.`);
+                } else {
+                    onLog(`[RESEARCH] ⚠️ Sin actividad reciente accesible.`);
                 }
+            } catch (e) {
+                onLog(`[RESEARCH] ⚠️ No se pudieron leer posts (Perfil privado o error).`);
+            }
 
-                // STEP 4: Psychological Analysis
-                const researchDossier = `
+            // STEP 4: Psychological Analysis
+            const researchDossier = `
                 PERFIL:
                 Nombre: ${name}
                 Headline: ${profile.title}
@@ -570,61 +602,104 @@ IMPORTANTE: Responde SOLO con JSON válido.`
                 ${recentPostsText || "No hay posts recientes disponibles."}
                 `;
 
-                const analysis = await this.generateUltraAnalysis({
-                    companyName: company,
-                    decisionMaker: { name, role, linkedin: profile.url }
-                } as Lead, researchDossier);
+            const analysis = await this.generateUltraAnalysis({
+                companyName: company,
+                decisionMaker: { name, role, linkedin: profile.url }
+            } as Lead, researchDossier);
 
-                finalLeads.push({
-                    id: `linkedin-psych-${Date.now()}-${i}`,
-                    source: 'linkedin',
-                    companyName: company,
-                    website: '', // We could search this, but focusing on Profile now
-                    location: interpreted.location,
-                    decisionMaker: {
-                        name,
-                        role,
-                        email: '', // Email is secondary in this flow
-                        phone: '',
-                        linkedin: profile.url
-                    },
-                    aiAnalysis: {
-                        summary: `Perfil Psicológico: ${analysis.bottleneck}`, // Using bottleneck field for psych summary
-                        fullAnalysis: analysis.fullAnalysis,
-                        psychologicalProfile: analysis.psychologicalProfile,
-                        businessMoment: analysis.businessMoment,
-                        salesAngle: analysis.salesAngle,
-                        fullMessage: analysis.personalizedMessage,
-                        generatedIcebreaker: analysis.bottleneck,
-                        painPoints: []
-                    },
-                    status: 'ready'
-                });
-            }
-
-            onLog(`[LINKEDIN] 🏁 Proceso finalizado. ${finalLeads.length} leads analizados.`);
-            onComplete(finalLeads);
-
-        } catch (error: any) {
-            onLog(`[LINKEDIN] ❌ Error: ${error.message}`);
-            onComplete([]);
+            finalLeads.push({
+                id: `linkedin-psych-${Date.now()}-${i}`,
+                source: 'linkedin',
+                companyName: company,
+                website: '', // We could search this, but focusing on Profile now
+                location: interpreted.location,
+                decisionMaker: {
+                    name,
+                    role,
+                    email: '', // Email is secondary in this flow
+                    phone: '',
+                    linkedin: profile.url
+                },
+                aiAnalysis: {
+                    summary: `Perfil Psicológico: ${analysis.bottleneck}`, // Using bottleneck field for psych summary
+                    fullAnalysis: analysis.fullAnalysis,
+                    psychologicalProfile: analysis.psychologicalProfile,
+                    businessMoment: analysis.businessMoment,
+                    salesAngle: analysis.salesAngle,
+                    fullMessage: analysis.personalizedMessage,
+                    generatedIcebreaker: analysis.bottleneck,
+                    painPoints: []
+                },
+                status: 'ready'
+            });
         }
+
+        onLog(`[LINKEDIN] 🏁 Proceso finalizado. ${finalLeads.length} leads analizados.`);
+        onComplete(finalLeads);
+
+    } catch (error: any) {
+        onLog(`[LINKEDIN] ❌ Error: ${error.message}`);
+        onComplete([]);
     }
+}
 
     private extractCompany(text: string): string {
-        // Heuristic: "CEO en [Empresa]" or "CEO at [Company]"
-        const atMatch = text.match(/\b(en|at|@)\s+([^|\-.,]+)/i);
-        if (atMatch && atMatch[2]) return atMatch[2].trim();
-        return '';
-    }
+    // Heuristic: "CEO en [Empresa]" or "CEO at [Company]"
+    const atMatch = text.match(/\b(en|at|@)\s+([^|\-.,]+)/i);
+    if (atMatch && atMatch[2]) return atMatch[2].trim();
+    return '';
+}
 
     private extractRole(text: string): string {
-        const lower = text.toLowerCase();
-        if (lower.includes('ceo')) return 'CEO';
-        if (lower.includes('founder') || lower.includes('fundador')) return 'Fundador';
-        if (lower.includes('owner') || lower.includes('propietario')) return 'Propietario';
-        if (lower.includes('director')) return 'Director';
-        return '';
+    const lower = text.toLowerCase();
+    if (lower.includes('ceo')) return 'CEO';
+    if (lower.includes('founder') || lower.includes('fundador')) return 'Fundador';
+    if (lower.includes('owner') || lower.includes('propietario')) return 'Propietario';
+    if (lower.includes('director')) return 'Director';
+    return '';
+}
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ANTI-DUPLICATE CHECK - Clean & Normalize
+    // ═══════════════════════════════════════════════════════════════════════════
+    private cleanUrl(url: string): string {
+        if (!url) return '';
+        return url
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')      // Remove protocol
+            .replace(/^www\./, '')             // Remove www
+            .replace(/\/$/, '')                // Remove trailing slash
+            .trim();
+    }
+
+    private isDuplicate(companyName: string, websiteOrUrl: string, exclusionSet: Set<string>): boolean {
+        // Check by company name (normalized)
+        const normalizedCompany = companyName.toLowerCase().trim();
+        if (exclusionSet.has(normalizedCompany)) {
+            return true;
+        }
+
+        // Check by website/URL (normalized)
+        const cleanedUrl = this.cleanUrl(websiteOrUrl);
+        if (cleanedUrl && exclusionSet.has(cleanedUrl)) {
+            return true;
+        }
+
+        // Check all variations in the Set to catch partial matches
+        for (const excluded of exclusionSet) {
+            // If both are URLs, compare cleaned versions
+            if (excluded.includes('.') && cleanedUrl.includes('.')) {
+                if (cleanedUrl === excluded || excluded === cleanedUrl) {
+                    return true;
+                }
+            }
+            // If both are company names, exact match comparison
+            if (normalizedCompany === excluded) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

@@ -171,8 +171,42 @@ function App() {
     setLogs([]);
     setLeads([]);
 
+    // 1. Fetch History for Anti-Duplicate Logic
+    addLog('[ANTI-DUPLICADOS] 🛡️ Analizando historial para evitar duplicados...');
+
+    // We need to fetch ALL past results to build the exclusion list
+    // This could be heavy, optimized by creating a dedicated RPC or just selecting specific columns
+    let allExclusions = new Set<string>();
+
+    if (userId) {
+      try {
+        const { data: pastSessions } = await supabase
+          .from('search_results_maribel')
+          .select('lead_data')
+          .eq('user_id', userId);
+
+        if (pastSessions) {
+          pastSessions.forEach(session => {
+            const leads = session.lead_data as any[]; // Type assertion
+            if (Array.isArray(leads)) {
+              leads.forEach(l => {
+                if (l.companyName) allExclusions.add(l.companyName.toLowerCase().trim());
+                if (l.website) allExclusions.add(l.website.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim());
+                if (l.decisionMaker?.linkedin) allExclusions.add(l.decisionMaker.linkedin.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim());
+              });
+            }
+          });
+        }
+        addLog(`[ANTI-DUPLICADOS] ✅ ${allExclusions.size} registros únicos cargados en memoria.`);
+      } catch (e) {
+        console.error(e);
+        addLog('[ANTI-DUPLICADOS] ⚠️ Error cargando historial, procediendo sin filtro.');
+      }
+    }
+
     searchService.startSearch(
       config,
+      allExclusions,
       // onLog
       (message) => addLog(message),
       // onComplete
