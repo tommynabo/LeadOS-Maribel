@@ -104,7 +104,7 @@ function App() {
   const loadHistory = async (uid: string) => {
     try {
       const { data, error } = await supabase
-        .from('search_results_diego')
+        .from('search_results_maribel')
         .select('*')
         .eq('user_id', uid)
         .order('created_at', { ascending: false });
@@ -194,7 +194,7 @@ function App() {
         // Save to Supabase (Cloud)
         if (userId) {
           try {
-            const { error } = await supabase.from('search_results_diego').insert({
+            const { error } = await supabase.from('search_results_maribel').insert({
               user_id: userId,
               session_id: newSession.id,
               platform: config.source,
