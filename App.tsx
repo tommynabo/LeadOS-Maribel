@@ -65,8 +65,16 @@ function App() {
 
   // Check Session on Mount
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
+    // Check active session and handle potential errors (like invalid refresh token)
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error("Error checking session:", error.message);
+        // If the refresh token is invalid, sign out to clear it
+        if (error.message.includes("Refresh Token")) {
+          supabase.auth.signOut();
+          setIsAuthenticated(false);
+        }
+      } else if (session) {
         setIsAuthenticated(true);
         setUserId(session.user.id);
         setCurrentPage('dashboard');
@@ -75,7 +83,26 @@ function App() {
       }
     });
 
+    // Listen for auth changes (sign in, sign out, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setIsAuthenticated(false);
+        setUserId(null);
+        setUserName('');
+        setCurrentPage('login');
+      } else if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+        setIsAuthenticated(true);
+        setUserId(session.user.id);
+        // Only load data if we weren't already authenticated to avoid double loading
+        if (!userId) {
+          loadProfile(session.user.id);
+          loadHistory(session.user.id);
+        }
+      }
+    });
+
     return () => {
+      subscription.unsubscribe();
       searchService.stop();
     };
   }, []);
