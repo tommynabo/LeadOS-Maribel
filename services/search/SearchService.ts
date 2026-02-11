@@ -515,15 +515,20 @@ IMPORTANTE: Responde SOLO con JSON válido.`
 
         const activeQuery = `site:linkedin.com/in (${roleTerms}) (${intentKeywords}) "${interpreted.location}"`;
 
+        const targetCount = config.maxResults || 5;
+        const bufferMultiplier = 4;
+        const fetchAmount = Math.max(targetCount * bufferMultiplier, 20); // At least 20
+
         onLog(`[LINKEDIN] 🕵️‍♂️ Iniciando BÚSQUEDA ACTIVA`);
+        onLog(`[LINKEDIN] 🎯 Objetivo: ${targetCount} leads — Buscando x${bufferMultiplier} buffer (${fetchAmount} perfiles) para asegurar filtrado.`);
         onLog(`[LINKEDIN] 🎯 Query: ${activeQuery}`);
 
         try {
-            // STEP 1: Discovery via Google
+            // STEP 1: Discovery via Google (x4 buffer)
             const searchResults = await this.callApifyActor(GOOGLE_SEARCH_SCRAPER, {
                 queries: activeQuery,
-                maxPagesPerQuery: 2,
-                resultsPerPage: config.maxResults || 15,
+                maxPagesPerQuery: 3,
+                resultsPerPage: fetchAmount,
                 languageCode: 'es',
                 countryCode: 'es',
             }, onLog);
@@ -551,7 +556,6 @@ IMPORTANTE: Responde SOLO con JSON válido.`
             // STEP 2: Deep Analysis (Posts + Psych Profile)
             // Process candidates one by one until we hit the target count
             const finalLeads: Lead[] = [];
-            const targetCount = config.maxResults || 5;
 
             // Actor for posts
             const POSTS_SCRAPER = 'LQQIXN9Othf8f7R5n'; // apimaestro/linkedin-profile-posts

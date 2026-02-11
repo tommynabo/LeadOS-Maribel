@@ -216,6 +216,42 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching }
           )}
         </div>
 
+        {/* Quantity Selector — mirrors the Manual Generator */}
+        <div className={`mt-6 space-y-3 transition-opacity ${schedulerEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+          <div className="flex justify-between items-center">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Cantidad de Leads
+            </label>
+            <div className="bg-secondary/50 rounded-md px-2 py-1">
+              <span className="text-xs font-mono text-muted-foreground">MAX: 50</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 bg-secondary/20 p-2 rounded-xl border border-border/50">
+            <input
+              type="range"
+              min="1"
+              max="50"
+              step="1"
+              value={config.maxResults}
+              onChange={(e) => onChange({ maxResults: parseInt(e.target.value) || 10 })}
+              className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-green-500 hover:accent-green-400 transition-all"
+              disabled={!schedulerEnabled}
+            />
+
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={config.maxResults}
+              onChange={handleNumberChange}
+              onClick={(e) => e.currentTarget.select()}
+              className="w-16 text-center font-bold text-lg bg-background border-2 border-input rounded-lg py-1 focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all shadow-sm"
+              disabled={!schedulerEnabled}
+            />
+          </div>
+        </div>
+
         <div className="mt-8 flex items-center justify-between pt-6 border-t border-border relative z-0">
           <span className="text-sm font-medium text-muted-foreground">Estado del Sistema</span>
           <button
