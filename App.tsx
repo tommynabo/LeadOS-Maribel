@@ -314,11 +314,8 @@ function App() {
           <div className="animate-[fadeIn_0.3s_ease-out]">
             <div className="max-w-4xl mx-auto mb-10 text-center space-y-2">
               <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
-                REGIST <span className="text-primary">LeadOS</span>
+                LeadOS <span className="text-primary">- Maribel</span>
               </h1>
-              <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-                Tu Motor de Crecimiento Automatizado para Gimnasios y Centros Fitness.
-              </p>
             </div>
 
             <SearchConfig
