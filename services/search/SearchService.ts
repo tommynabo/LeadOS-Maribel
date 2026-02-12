@@ -323,7 +323,8 @@ IMPORTANTE: Responde SOLO con JSON válido.`
 
         // STAGE 1: Google Maps scraping (Over-fetch significantly to filter later)
         const targetCount = config.maxResults || 10;
-        const fetchAmount = Math.max(targetCount * 5, 50); // Get at least 50 or 5x target
+        const bufferMultiplier = 4;
+        const fetchAmount = Math.max(targetCount * bufferMultiplier, 50); // Get at least 50 or 4x target with buffer
 
         const mapsResults = await this.callApifyActor(GOOGLE_MAPS_SCRAPER, {
             searchStringsArray: [query],
@@ -459,8 +460,81 @@ IMPORTANTE: Responde SOLO con JSON válido.`
             return;
         }
 
-        // Limit to requested amount
-        const finalLeads = finalCandidates.slice(0, targetCount);
+        // Buffer Logic: If we don't have enough leads, try to complete with a second broader search
+        let finalLeads = finalCandidates.slice(0, targetCount);
+        
+        if (finalLeads.length < targetCount && this.isRunning) {
+            onLog(`[GMAIL] 📈 Buffer activado: Se encontraron ${finalLeads.length}/${targetCount} leads. Intentando rellenar...`);
+            
+            // Try a broader search without location to fill the gap
+            const needed = targetCount - finalLeads.length;
+            const broaderFetchAmount = needed * bufferMultiplier;
+            
+            try {
+                const broaderResults = await this.callApifyActor(GOOGLE_MAPS_SCRAPER, {
+                    searchStringsArray: [interpreted.searchQuery], // Without location
+                    maxCrawledPlacesPerSearch: broaderFetchAmount,
+                    language: 'es',
+                    includeWebsiteEmail: true,
+                    scrapeContacts: true,
+                    maxImages: 0,
+                    maxReviews: 0,
+                }, onLog);
+
+                onLog(`[GMAIL] 🔍 Búsqueda amplia encontró ${broaderResults.length} empresas adicionales.`);
+
+                // Process broader results
+                for (const item of broaderResults) {
+                    if (finalLeads.length >= targetCount) break;
+
+                    const tempLead = {
+                        companyName: item.title || item.name || 'Sin Nombre',
+                        website: item.website?.replace(/^https?:\/\//, '').replace(/\/$/, '') || ''
+                    };
+
+                    // Check for duplicates
+                    if (this.isDuplicate(tempLead.companyName, tempLead.website || '', exclusionSet)) {
+                        continue;
+                    }
+
+                    // Only add if has email
+                    const email = item.email || (item.emails?.[0]) || '';
+                    if (email) {
+                        finalLeads.push({
+                            id: String(item.placeId || `lead-${Date.now()}-${finalLeads.length}`),
+                            source: 'gmail' as const,
+                            companyName: tempLead.companyName,
+                            website: tempLead.website,
+                            location: item.address || item.fullAddress || '',
+                            decisionMaker: {
+                                name: '',
+                                role: 'Propietario',
+                                email: email,
+                                phone: item.phone || (item.phones?.[0]) || '',
+                                linkedin: '',
+                                facebook: item.facebook || '',
+                                instagram: item.instagram || '',
+                            },
+                            aiAnalysis: {
+                                summary: `${item.categoryName || interpreted.industry} - ${item.reviewsCount || 0} reseñas (${item.totalScore || 'N/A'}⭐)`,
+                                painPoints: [],
+                                generatedIcebreaker: '',
+                                fullMessage: '',
+                                fullAnalysis: '',
+                                psychologicalProfile: '',
+                                businessMoment: '',
+                                salesAngle: ''
+                            },
+                            status: 'scraped' as const
+                        });
+                    }
+                }
+                
+                onLog(`[GMAIL] ✅ Buffer completado: Total ahora ${finalLeads.length}/${targetCount} leads.`);
+            } catch (e: any) {
+                onLog(`[GMAIL] ⚠️ No se pudo completar el buffer: ${e.message}`);
+            }
+        }
 
         onLog(`[GMAIL] 💎 Generando Icebreakers para ${finalLeads.length} leads validados...`);
 

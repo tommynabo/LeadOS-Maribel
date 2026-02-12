@@ -51,6 +51,8 @@ export interface SearchConfigState {
   source: PlatformSource;
   mode: SearchMode;
   maxResults: number;
+  customLocation?: string;
+  customRoles?: string;
 }
 
 export interface SearchSession {

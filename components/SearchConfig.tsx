@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Zap, Clock, Calendar } from 'lucide-react';
+import { Play, Zap, Clock, Calendar, SlidersHorizontal, X } from 'lucide-react';
 import { SearchConfigState } from '../lib/types';
 import { PROJECT_CONFIG } from '../config/project';
 
@@ -14,6 +14,7 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching }
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [scheduleTime, setScheduleTime] = useState('09:00');
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [showCriteria, setShowCriteria] = useState(false);
 
   // Helper to handle manual number input clearly
   const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -40,6 +41,137 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching }
   };
 
   return (
+    <div className="space-y-4">
+
+      {/* Criteria Button Row */}
+      <div className="flex justify-end relative">
+        <button
+          onClick={() => setShowCriteria(!showCriteria)}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-secondary transition-colors"
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          Criterio
+        </button>
+
+        {/* Criteria Popup */}
+        {showCriteria && (
+          <div className="absolute top-full right-0 mt-2 w-96 bg-popover text-popover-foreground border border-border shadow-2xl rounded-xl p-6 z-50 animate-in fade-in zoom-in-95 duration-200 max-h-[80vh] overflow-y-auto scrollbar-thin">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h4 className="font-semibold text-base">Criterios de Búsqueda</h4>
+                <p className="text-xs text-muted-foreground mt-1">Personaliza los parámetros de tu búsqueda</p>
+              </div>
+              <button
+                onClick={() => setShowCriteria(false)}
+                className="p-1 hover:bg-secondary rounded-md transition-colors flex-shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {/* ICP / Query */}
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-2">
+                  🎯 Perfil Objetivo (ICP)
+                </label>
+                <textarea
+                  value={config.query}
+                  onChange={(e) => onChange({ query: e.target.value })}
+                  rows={3}
+                  className="w-full text-sm bg-background border border-input rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary transition-all resize-none"
+                  placeholder="Ej: Mujeres directivas, +40 años, experiencia en tech, buscando marca personal..."
+                />
+                <p className="text-xs text-muted-foreground mt-1.5">Describe el perfil ideal de tu lead objetivo.</p>
+              </div>
+
+              {/* Location */}
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-2">
+                  📍 Ubicación
+                </label>
+                <input
+                  type="text"
+                  value={config.customLocation || PROJECT_CONFIG.targets.locations.join(', ')}
+                  onChange={(e) => onChange({ customLocation: e.target.value })}
+                  className="w-full text-sm bg-background border border-input rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                  placeholder="Madrid, Barcelona, Valencia..."
+                />
+                <p className="text-xs text-muted-foreground mt-1.5">Ciudades o regiones donde buscar (separadas por comas).</p>
+              </div>
+
+              {/* Target Roles */}
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-2">
+                  👔 Cargos Objetivo
+                </label>
+                <input
+                  type="text"
+                  value={config.customRoles || ''}
+                  onChange={(e) => onChange({ customRoles: e.target.value })}
+                  className="w-full text-sm bg-background border border-input rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                  placeholder="CEO, Fundadora, Directora, Autora, Speaker..."
+                />
+                <p className="text-xs text-muted-foreground mt-1.5">Posiciones o roles clave que buscas (separados por comas).</p>
+              </div>
+
+              {/* Search Mode */}
+              <div>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-2">
+                  ⚡ Modo de Búsqueda
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onChange({ mode: 'fast' })}
+                    className={`flex-1 text-xs font-medium py-2 px-3 rounded-lg border transition-all ${
+                      config.mode === 'fast'
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'border-border hover:bg-secondary'
+                    }`}
+                  >
+                    ⚡ Rápido
+                  </button>
+                  <button
+                    onClick={() => onChange({ mode: 'deep' })}
+                    className={`flex-1 text-xs font-medium py-2 px-3 rounded-lg border transition-all ${
+                      config.mode === 'deep'
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'border-border hover:bg-secondary'
+                    }`}
+                  >
+                    🔍 Profundo
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5">Rápido: básico. Profundo: análisis completo (más lento).</p>
+              </div>
+
+              {/* Reset to defaults */}
+              <button
+                onClick={() => {
+                  onChange({
+                    query: PROJECT_CONFIG.targets.icp,
+                    customLocation: undefined,
+                    customRoles: undefined,
+                    mode: 'fast'
+                  });
+                }}
+                className="w-full text-xs font-semibold text-primary-foreground bg-primary/20 hover:bg-primary/30 py-2.5 border border-primary/30 rounded-lg transition-all"
+              >
+                ↺ Restaurar valores por defecto
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Backdrop to close popup */}
+      {showCriteria && (
+        <div
+          className="fixed inset-0 z-40 bg-transparent"
+          onClick={() => setShowCriteria(false)}
+        />
+      )}
+
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
       {/* Generador Manual */}
@@ -267,6 +399,7 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching }
         </div>
       </div>
 
+    </div>
     </div>
   );
 }
