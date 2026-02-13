@@ -10,6 +10,7 @@ import { HistoryModal } from './components/HistoryModal';
 import { Lead, SearchConfigState, PageView, SearchSession } from './lib/types';
 import { PROJECT_CONFIG } from './config/project';
 import { searchService } from './services/search/SearchService';
+import { autopilotService } from './services/autopilot/AutopilotService';
 import { supabase } from './lib/supabase';
 
 function App() {
@@ -37,6 +38,11 @@ function App() {
   // History State
   const [history, setHistory] = useState<SearchSession[]>([]);
   const [selectedHistorySession, setSelectedHistorySession] = useState<SearchSession | null>(null);
+
+  // Autopilot State
+  const [autopilotEnabled, setAutopilotEnabled] = useState(autopilotService.getConfig().enabled);
+  const [autopilotTime, setAutopilotTime] = useState(autopilotService.getConfig().scheduledTime);
+  const [autopilotQuantity, setAutopilotQuantity] = useState(autopilotService.getConfig().leadsQuantity);
 
   // Sound Effect
   const playGlassSound = () => {
@@ -101,9 +107,13 @@ function App() {
       }
     });
 
+    // Initialize autopilot monitoring
+    autopilotService.initialize();
+
     return () => {
       subscription.unsubscribe();
       searchService.stop();
+      autopilotService.destroy();
     };
   }, []);
 
@@ -282,6 +292,123 @@ function App() {
       setIsSearching(false);
       setTerminalExpanded(false);
       addLog('[USUARIO] 🛑 Generación detenida manualmente.');
+      autopilotService.markSearchComplete();
+    }
+  };
+
+  // --- Autopilot Logic ---
+
+  const executeAutopilotSearch = (quantity: number) => {
+    // Use the current config but override maxResults with autopilot quantity
+    const autopilotConfig = { ...config, maxResults: quantity };
+
+    setIsSearching(true);
+    setTerminalVisible(true);
+    setTerminalExpanded(true);
+    setLeads([]);
+
+    // Build exclusion set for anti-duplicates
+    const runSearch = async () => {
+      let allExclusions = new Set<string>();
+
+      if (userId) {
+        try {
+          const { data: pastSessions } = await supabase
+            .from('search_results_maribel')
+            .select('lead_data')
+            .eq('user_id', userId);
+
+          if (pastSessions) {
+            pastSessions.forEach(session => {
+              const leads = session.lead_data as any[];
+              if (Array.isArray(leads)) {
+                leads.forEach(l => {
+                  if (l.companyName) allExclusions.add(l.companyName.toLowerCase().trim());
+                  if (l.website) allExclusions.add(l.website.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim());
+                  if (l.decisionMaker?.linkedin) allExclusions.add(l.decisionMaker.linkedin.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').trim());
+                });
+              }
+            });
+          }
+          addLog(`[ANTI-DUPLICADOS] ✅ ${allExclusions.size} registros cargados.`);
+        } catch (e) {
+          console.error(e);
+          addLog('[ANTI-DUPLICADOS] ⚠️ Error cargando historial.');
+        }
+      }
+
+      searchService.startSearch(
+        autopilotConfig,
+        allExclusions,
+        (message) => addLog(message),
+        async (results) => {
+          setIsSearching(false);
+          setLeads(results);
+
+          const newSession: SearchSession = {
+            id: Date.now().toString(),
+            date: new Date(),
+            query: autopilotConfig.query,
+            source: autopilotConfig.source,
+            resultsCount: results.length,
+            leads: results
+          };
+          setHistory(prev => [newSession, ...prev]);
+
+          if (userId) {
+            try {
+              const { error } = await supabase.from('search_results_maribel').insert({
+                user_id: userId,
+                session_id: newSession.id,
+                platform: autopilotConfig.source,
+                query: autopilotConfig.query,
+                lead_data: results as any,
+                status: 'autopilot'
+              });
+              if (error) console.error('DB Error:', error);
+              else addLog('[AUTOPILOT] ✅ Resultados del piloto automático guardados en la nube.');
+            } catch (err) {
+              console.error('Failed to save autopilot results to DB', err);
+            }
+          }
+
+          autopilotService.markSearchComplete();
+          playGlassSound();
+          setTimeout(() => setTerminalExpanded(false), 1500);
+        }
+      );
+    };
+
+    runSearch();
+  };
+
+  // Set autopilot callbacks whenever userId changes
+  useEffect(() => {
+    autopilotService.setCallbacks(executeAutopilotSearch, addLog);
+  }, [userId, config]);
+
+  const handleAutopilotToggle = (enabled: boolean) => {
+    setAutopilotEnabled(enabled);
+    if (enabled) {
+      autopilotService.enable(autopilotTime, autopilotQuantity);
+    } else {
+      autopilotService.disable();
+    }
+  };
+
+  const handleAutopilotTimeChange = (time: string) => {
+    setAutopilotTime(time);
+    autopilotService.updateTime(time);
+    if (autopilotEnabled) {
+      autopilotService.enable(time, autopilotQuantity);
+    }
+  };
+
+  const handleAutopilotQuantityChange = (quantity: number) => {
+    setAutopilotQuantity(quantity);
+    autopilotService.updateQuantity(quantity);
+    if (autopilotEnabled) {
+      autopilotService.enable(autopilotTime, quantity);
     }
   };
 
@@ -324,6 +451,13 @@ function App() {
               onSearch={handleSearch}
               onStop={handleStop}
               isSearching={isSearching}
+              autopilotEnabled={autopilotEnabled}
+              autopilotTime={autopilotTime}
+              autopilotQuantity={autopilotQuantity}
+              onAutopilotToggle={handleAutopilotToggle}
+              onAutopilotTimeChange={handleAutopilotTimeChange}
+              onAutopilotQuantityChange={handleAutopilotQuantityChange}
+              autopilotRanToday={autopilotService.hasRunToday()}
             />
 
             <AgentTerminal
