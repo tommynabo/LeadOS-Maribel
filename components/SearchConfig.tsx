@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Play, Zap, Clock, Calendar, SlidersHorizontal, X } from 'lucide-react';
 import { SearchConfigState } from '../lib/types';
 import { PROJECT_CONFIG } from '../config/project';
+import { SearchCriteriaModal } from './SearchCriteriaModal';
 
 interface SearchConfigProps {
   config: SearchConfigState;
@@ -58,134 +59,16 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
           Criterio
         </button>
 
-        {/* Criteria Popup */}
-        {showCriteria && (
-          <>
-            {/* Backdrop */}
-            <div
-              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-              onClick={() => setShowCriteria(false)}
-            />
-            
-            {/* Modal Dialog */}
-            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[90vw] max-w-2xl max-h-[85vh] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-primary/20 via-primary/10 to-transparent border-b border-primary/20 px-8 py-6 flex-shrink-0">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-2xl text-foreground">🎯 Criterios de Búsqueda</h4>
-                    <p className="text-sm text-muted-foreground mt-2">Personaliza los parámetros exactos de tu búsqueda de leads</p>
-                  </div>
-                  <button
-                    onClick={() => setShowCriteria(false)}
-                    className="p-2 hover:bg-destructive/20 rounded-lg transition-all hover:text-destructive flex-shrink-0"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="bg-card border border-border/50 flex-1 overflow-y-auto p-8 scrollbar-thin space-y-6">
-              {/* ICP / Query */}
-              <div className="space-y-3">
-                <div>
-                  <label className="text-sm font-bold text-primary uppercase tracking-wider block mb-3">
-                    🎯 Perfil Objetivo (ICP)
-                  </label>
-                  <textarea
-                    value={config.query}
-                    onChange={(e) => onChange({ query: e.target.value })}
-                    rows={4}
-                    className="w-full text-base bg-background border-2 border-input rounded-lg px-4 py-3 focus:ring-2 focus:ring-primary focus:border-primary transition-all resize-none"
-                    placeholder="Ej: Mujeres directivas, +40 años, experiencia en tech, buscando marca personal..."
-                  />
-                </div>
-                <p className="text-sm text-muted-foreground">Describe detalladamente el perfil ideal de tu lead objetivo.</p>
-              </div>
-
-              {/* Location */}
-              <div className="space-y-3">
-                <label className="text-sm font-bold text-primary uppercase tracking-wider block">
-                  📍 Ubicación
-                </label>
-                <input
-                  type="text"
-                  value={config.customLocation || PROJECT_CONFIG.targets.locations.join(', ')}
-                  onChange={(e) => onChange({ customLocation: e.target.value })}
-                  className="w-full text-base bg-background border-2 border-input rounded-lg px-4 py-3 focus:ring-2 focus:ring-primary focus:border-primary transition-all"
-                  placeholder="Madrid, Barcelona, Valencia..."
-                />
-                <p className="text-sm text-muted-foreground">Ciudades o regiones donde deseas buscar (separadas por comas).</p>
-              </div>
-
-              {/* Target Roles */}
-              <div className="space-y-3">
-                <label className="text-sm font-bold text-primary uppercase tracking-wider block">
-                  👔 Cargos Objetivo
-                </label>
-                <input
-                  type="text"
-                  value={config.customRoles || ''}
-                  onChange={(e) => onChange({ customRoles: e.target.value })}
-                  className="w-full text-base bg-background border-2 border-input rounded-lg px-4 py-3 focus:ring-2 focus:ring-primary focus:border-primary transition-all"
-                  placeholder="CEO, Fundadora, Directora, Autora, Speaker..."
-                />
-                <p className="text-sm text-muted-foreground">Posiciones o roles clave que buscas (separados por comas).</p>
-              </div>
-
-              {/* Search Mode */}
-              <div className="space-y-4">
-                <label className="text-sm font-bold text-primary uppercase tracking-wider block">
-                  ⚡ Modo de Búsqueda
-                </label>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => onChange({ mode: 'fast' })}
-                    className={`flex-1 text-sm font-bold py-3 px-4 rounded-lg border-2 transition-all ${
-                      config.mode === 'fast'
-                        ? 'bg-primary text-primary-foreground border-primary shadow-lg'
-                        : 'border-border/50 bg-secondary/20 hover:bg-secondary/40 hover:border-border'
-                    }`}
-                  >
-                    ⚡ Rápido
-                  </button>
-                  <button
-                    onClick={() => onChange({ mode: 'deep' })}
-                    className={`flex-1 text-sm font-bold py-3 px-4 rounded-lg border-2 transition-all ${
-                      config.mode === 'deep'
-                        ? 'bg-primary text-primary-foreground border-primary shadow-lg'
-                        : 'border-border/50 bg-secondary/20 hover:bg-secondary/40 hover:border-border'
-                    }`}
-                  >
-                    🔍 Profundo
-                  </button>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-semibold">Rápido:</span> búsqueda estándar (recomendado)  
-                  <br />
-                  <span className="font-semibold">Profundo:</span> análisis completo con investigación (más lento)
-                </p>
-              </div>
-
-              {/* Reset to defaults */}
-              <button
-                onClick={() => {
-                  onChange({
-                    query: PROJECT_CONFIG.targets.icp,
-                    customLocation: undefined,
-                    customRoles: undefined,
-                    mode: 'fast'
-                  });
-                }}
-                className="w-full text-sm font-bold text-primary-foreground bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 py-3 px-4 border-2 border-primary/50 rounded-lg transition-all shadow-md hover:shadow-lg"
-              >
-                ↺ Restaurar valores por defecto
-              </button>
-            </div>
-            </div>
-          </>
-        )}
+        {/* Criteria Modal */}
+        <SearchCriteriaModal
+          isOpen={showCriteria}
+          onClose={() => setShowCriteria(false)}
+          currentQuery={config.query}
+          onSave={(newQuery) => {
+            onChange({ query: newQuery });
+            setShowCriteria(false);
+          }}
+        />
       </div>
 
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
