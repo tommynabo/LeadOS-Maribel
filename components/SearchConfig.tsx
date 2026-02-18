@@ -64,8 +64,8 @@ export function SearchConfig({ config, onChange, onSearch, onStop, isSearching, 
           isOpen={showCriteria}
           onClose={() => setShowCriteria(false)}
           currentQuery={config.query}
-          onSave={(newQuery) => {
-            onChange({ query: newQuery });
+          onSave={(newQuery, filters) => {
+            onChange({ query: newQuery, advancedFilters: filters });
             setShowCriteria(false);
           }}
         />
